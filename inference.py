@@ -2,6 +2,8 @@ import os
 
 import numpy as np
 
+import contextlib
+
 os.environ['HF_HUB_CACHE'] = './checkpoints/hf_cache'
 import shutil
 import warnings
@@ -368,7 +370,16 @@ def main(args):
         chunk_cond = cond[:, processed_frames:processed_frames + max_source_window]
         is_last_chunk = processed_frames + max_source_window >= cond.size(1)
         cat_condition = torch.cat([prompt_condition, chunk_cond], dim=1)
-        with torch.autocast(device_type=device.type, dtype=torch.float16 if fp16 else torch.float32):
+
+        # NOTE: PyTorch autocast does not support MPS device_type.
+        # Use autocast only on CUDA when fp16 is enabled.
+        autocast_ctx = (
+            torch.autocast(device_type="cuda", dtype=torch.float16)
+            if (fp16 and device.type == "cuda")
+            else contextlib.nullcontext()
+        )
+
+        with autocast_ctx:
             # Voice Conversion
             vc_target = model.cfm.inference(cat_condition,
                                                        torch.LongTensor([cat_condition.size(1)]).to(mel2.device),
